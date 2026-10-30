@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "invariants": [
+    "append_only",
+    "digest_covers_canonical_raw",
+    "prev_hash_chains",
+    "provenance_depth_gte_1_or_human_root",
+    "unmeasured_must_be_named"
+  ],
+  "sources": [
+    "swarm-vm-runner",
+    "TrainLLM",
+    "control12-lattice-ops",
+    "capability-plane",
+    "trinity-core"
+  ]
+}
