@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 MAX_LINE_BYTES = 1_048_576
-_HEX = re.compile(r"[0-9a-f]{64}\\Z")
+_HEX = re.compile(r"[0-9a-f]{64}\Z")
 _ALLOWED_ORIENTATION = frozenset({"pass", "fail", "mixed", "unmeasured"})
 
 
