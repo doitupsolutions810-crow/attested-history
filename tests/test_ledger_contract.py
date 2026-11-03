@@ -125,6 +125,12 @@ class LedgerTests(unittest.TestCase):
         entry = self.put()
         self.assertEqual(entry["digest"], record_digest({k: v for k, v in entry.items() if k != "digest"}))
 
+    def test_giant_int_refuses_cleanly(self):
+        with self.assertRaises(LedgerError):
+            writer.append("x", "y", {}, provenance_depth=1,
+                          residual={"S": 10 ** 400, "orientation": "pass"})
+        self.assertFalse(self.log.exists())
+
     def test_depth_zero_with_human_root(self):
         entry = writer.append("x", "y", {}, human_root="operator-approved")
         self.assertEqual(entry["provenance_depth"], 0)
