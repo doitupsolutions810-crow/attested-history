@@ -47,6 +47,15 @@ def record_digest(entry_without_digest: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_bytes(entry_without_digest)).hexdigest()
 
 
+def _finite_number(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
+
+
 def _label(value: Any, name: str, max_len: int = 128) -> None:
     if not isinstance(value, str) or not value.strip() or len(value) > max_len:
         raise LedgerError(f"{name} must be a nonempty bounded string")
@@ -62,7 +71,7 @@ def validate_entry(entry: Any, *, seq: int, previous_digest: str | None) -> str:
     if type(entry["seq"]) is not int or entry["seq"] != seq:
         raise LedgerError("non-contiguous sequence")
     stamp = entry["ts"]
-    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)) or not math.isfinite(stamp) or stamp <= 0:
+    if not _finite_number(stamp) or stamp <= 0:
         raise LedgerError("invalid timestamp")
     _label(entry["source"], "source")
     _label(entry["kind"], "kind")
@@ -90,7 +99,7 @@ def validate_entry(entry: Any, *, seq: int, previous_digest: str | None) -> str:
         if s is None:
             if orientation != "unmeasured":
                 raise LedgerError("unmeasured residual must be named")
-        elif isinstance(s, bool) or not isinstance(s, (int, float)) or not math.isfinite(s) or not 0 <= s <= 0.25:
+        elif not _finite_number(s) or not 0 <= s <= 0.25:
             raise LedgerError("residual S must be finite and between zero and one-quarter")
         cone = residual.get("cone")
         if cone is not None and type(cone) is not bool:
