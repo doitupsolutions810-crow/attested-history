@@ -18,6 +18,7 @@ Each entry: residual (S, orientation, cone status), provenance (who measured, fr
 - capability-authority's AttestPipe
 - Avrone's ledger_bridge.py (forwards trinity-core's events.jsonl)
 - Avrone's swarm_bridge.py (ADMITTED intents as swarm jobs)
+- avrone-daemon's capgate_head_attest.py (forwards capgate's signed head — count, head hash, verify_chain walk — as capgate_head entries)
 
 ## Verification
 

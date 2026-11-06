@@ -12,6 +12,7 @@
     "TrainLLM",
     "control12-lattice-ops",
     "capability-plane",
-    "trinity-core"
+    "trinity-core",
+    "avrone-daemon"
   ]
 }
