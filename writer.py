@@ -1,63 +1,94 @@
 #!/usr/bin/env python3
-"""writer — append one attested entry to the history log."""
+"""Append a validated history record with cross-process locking and fsync."""
 from __future__ import annotations
 
 import argparse
-import hashlib
+import contextlib
 import json
+import os
 import time
 from pathlib import Path
+from typing import Iterator
+
+from ledger_contract import LedgerError, canonical_bytes, iter_entries, record_digest, validate_entry
 
 LOG = Path(__file__).resolve().parent / "history.jsonl"
 
 
-def _canon(obj: dict) -> str:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+@contextlib.contextmanager
+def _exclusive_writer(path: Path) -> Iterator[None]:
+    # A stable sidecar lock survives atomic replaces. Do not silently weaken on Windows.
+    try:
+        import fcntl
+    except ImportError as exc:
+        raise LedgerError("POSIX flock required for safe concurrent appends") from exc
+    lock_path = path.with_name(path.name + ".lock")
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise LedgerError("cannot open ledger lock") from exc
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
-def _digest(obj: dict) -> str:
-    return hashlib.sha256(_canon(obj).encode()).hexdigest()
-
-
-def last_entry() -> dict | None:
-    if not LOG.exists():
-        return None
-    lines = [l for l in LOG.read_text().splitlines() if l.strip()]
-    return json.loads(lines[-1]) if lines else None
+def last_entry(path: Path | None = None) -> dict | None:
+    last = None
+    for last in iter_entries(path if path is not None else LOG):
+        pass
+    return last
 
 
 def append(source: str, kind: str, raw: dict, *, residual: dict | None = None,
            provenance_depth: int = 0, capability_id: str | None = None,
            human_root: str | None = None) -> dict:
-    if provenance_depth < 1 and human_root is None:
-        raise ValueError("ingest rejected: model-only chain (provenance_depth < 1, no human_root)")
-    if residual is not None and residual.get("S") is None and residual.get("orientation") != "unmeasured":
-        raise ValueError("ingest rejected: unmeasured residual must be explicitly named")
-    prev = last_entry()
-    entry = {
-        "seq": (prev["seq"] + 1) if prev else 0,
-        "ts": time.time(),
-        "source": source,
-        "kind": kind,
-        "digest": "",  # filled below
-        "provenance_depth": provenance_depth,
-        "residual": residual,
-        "capability_id": capability_id,
-        "human_root": human_root,
-        "raw": raw,
-        "prev_hash": prev["digest"] if prev else None,
-    }
-    entry["digest"] = _digest({k: v for k, v in entry.items() if k != "digest"})
-    with LOG.open("a") as f:
-        f.write(_canon(entry) + "\n")
-    return entry
+    with _exclusive_writer(LOG):
+        prev = last_entry()
+        entry = {
+            "seq": prev["seq"] + 1 if prev else 0,
+            "ts": time.time(),
+            "source": source,
+            "kind": kind,
+            "digest": "",
+            "provenance_depth": provenance_depth,
+            "residual": residual,
+            "capability_id": capability_id,
+            "human_root": human_root,
+            "raw": raw,
+            "prev_hash": prev["digest"] if prev else None,
+        }
+        entry["digest"] = record_digest({k: v for k, v in entry.items() if k != "digest"})
+        validate_entry(entry, seq=entry["seq"], previous_digest=entry["prev_hash"])
+        encoded = canonical_bytes(entry) + b"\n"
+        if len(encoded) > 1_048_576:
+            raise LedgerError("entry exceeds ledger byte limit")
+        flags = os.O_CREAT | os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(LOG, flags, 0o600)
+            try:
+                cursor = 0
+                while cursor < len(encoded):
+                    count = os.write(fd, encoded[cursor:])
+                    if count <= 0:
+                        raise OSError("short append")
+                    cursor += count
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError as exc:
+            raise LedgerError("append failed; inspect ledger for a torn final line") from exc
+        return entry
 
 
 def main() -> None:
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description="Append strictly checked attested-history record")
     p.add_argument("--source", required=True)
     p.add_argument("--kind", required=True)
-    p.add_argument("--raw", required=True, help="JSON string")
+    p.add_argument("--raw", required=True, help="JSON object string")
     p.add_argument("--S", type=float, default=None)
     p.add_argument("--orientation", default=None)
     p.add_argument("--depth", type=int, default=0)
@@ -67,9 +98,12 @@ def main() -> None:
     residual = None
     if a.S is not None or a.orientation is not None:
         residual = {"S": a.S, "orientation": a.orientation}
-    e = append(a.source, a.kind, json.loads(a.raw), residual=residual,
-               provenance_depth=a.depth, capability_id=a.capability,
-               human_root=a.human_root)
+    from ledger_contract import strict_loads
+    try:
+        e = append(a.source, a.kind, strict_loads(a.raw.encode()), residual=residual,
+                   provenance_depth=a.depth, capability_id=a.capability, human_root=a.human_root)
+    except LedgerError as exc:
+        p.exit(1, f"ledger refused: {exc}\n")
     print(json.dumps({"seq": e["seq"], "digest": e["digest"]}, indent=2))
 
 

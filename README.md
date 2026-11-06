@@ -1,43 +1,38 @@
 # attested-history
 
-One append-only log binding every receipt across the compile under a single provenance schema.
+A local append-only, hash-chained JSONL ledger for cross-repository evidence **indexing**. This implementation checks record integrity but does **not** authenticate the producer or independently prove the claimed provenance depth. Cryptographic signatures, trusted commit anchoring and source receipt verification belong to a separate trusted verifier.
 
-## Sources
+## Potential source systems (integration contracts are not enabled by this file)
 
-- swarm-vm-runner/ledger/ — dated chained SHA-256 success proofs
-- TrainLLM action log — previousHash-linked ed25519 envelopes
-- CONTROL12 attestation ledger — v5 INTENT..LEARN steps
-- capability-plane attestpipe bus — sole side-effect path receipts
-- trinity-core /tmp/trinity-ledger/events.jsonl — forwarded via Avrone ledger_bridge.py
+- [swarm-vm-runner](https://github.com/doitupsolutions810-crow/swarm-vm-runner) — coordinator/worker receipts
+- [TrainLLM](https://github.com/doitupsolutions810-crow/TrainLLM) — previously signed action envelopes
+- [control12-lattice-ops](https://github.com/doitupsolutions810-crow/control12-lattice-ops) — attestation and control events
+- [capability-plane](https://github.com/doitupsolutions810-crow/capability-plane) — attestation event bus
+- [trinity-core](https://github.com/doitupsolutions810-crow/trinity-core) / [Avrone](https://github.com/doitupsolutions810-crow/Avrone) — orchestration events
 
-## Schema
+No direct import of these sources occurs automatically.
 
-Each entry:
+## v1 entry contract
 
-```json
-{
-  "seq": 0,
-  "ts": 0.0,
-  "source": "swarm-vm-runner",
-  "kind": "success_proof",
-  "digest": "<sha256 of canonical payload>",
-  "provenance_depth": 1,
-  "residual": {"S": 0.0, "orientation": "pass", "cone": false},
-  "capability_id": null,
-  "human_root": null,
-  "raw": {},
-  "prev_hash": null
-}
+Each record is an exact JSON object containing `seq`, `ts`, `source`, `kind`, `digest`, `provenance_depth`, `residual`, `capability_id`, `human_root`, `raw`, and `prev_hash`. `raw` must be an object. `seq` starts at zero and increments by one.
+
+- `digest = SHA256(json.dumps(record **without digest**, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False))` (UTF-8). This is the historical writer's *actual* full-record digest. Previous documentation incorrectly described it as a digest of `raw` alone.
+- `prev_hash` equals the **previous record digest**, or `null` for the first record.
+- `provenance_depth` is a claimed nonnegative integer and is admitted only when it is at least one or `human_root` is a nonempty string. The verifier checks structure, **not** the truth of ancestry.
+- If a `residual` is present, its `orientation` must be `pass`, `fail`, `mixed`, or `unmeasured`. Its `S` is `null` only when orientation is `unmeasured`; measured `S` must be finite in [0, 0.25].
+- Entries are capped at 1 MiB; invalid UTF-8, duplicate JSON keys, NaN/Infinity, oversized lines, noncontiguous sequence numbers, broken links, and torn final lines are refused.
+- A writer holds a POSIX `flock` sidecar lock across verification and append and syncs the appended data with `fsync`. A damaged ledger must be inspected/recovered explicitly, not silently repaired or truncated.
+
+## Commands
+
+```bash
+python3 writer.py --source great-scale --kind measurement --raw '{"claim":"test"}' --depth 1 --S 0.125 --orientation mixed
+python3 verify.py
+python3 -m unittest discover -s tests -v
 ```
 
-## Invariants
+The verifier exits nonzero on corruption and returns JSON with `ok`, `verified` (false for an empty ledger), and `cryptographically_authenticated:false`. **A clean digest chain is not a signed execution receipt.** A consumer must verify source identity, authorization, operation idempotency and completion status separately before treating a claim as production evidence.
 
-1. Append-only. No update, no delete. Corrections are new entries referencing the bad seq.
-2. Digest covers the canonical JSON of raw, sort_keys, no spaces.
-3. prev_hash chains to the digest of the prior entry. First entry prev_hash is null.
-4. provenance_depth is strictly the count of human-or-measured ancestors walkable from this entry. A model-only chain cannot exceed depth 0 and is rejected at ingest.
-5. Entries with residual.S == null and orientation != "unmeasured" are rejected — unmeasured must be named, never implied.
+## Further integration gate
 
-## Verify
-
-`python verify.py` walks the log, checks every digest and chain link, and reports the deepest provenance chain and the hottest residual. Exit 1 on any invariant break.
+Reconcile exact operation ID + canonical request digest + signed completion receipt before ingesting cross-repository execution evidence. A queued Swarm receipt, a capability grant, and a numerical Great Scale result are three different evidence types; none alone establishes completed execution. Future v2 work should bind records to independent signer keys and externally anchored chain heads without retroactively relabeling v1 history as authenticated.

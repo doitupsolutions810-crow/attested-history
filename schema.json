@@ -1,11 +1,23 @@
 {
   "schema_version": 1,
+  "integrity_scope": "canonical record excluding digest",
+  "authenticated": false,
+  "limits": {
+    "max_entry_bytes": 1048576,
+    "measured_S_range": [
+      0,
+      0.25
+    ]
+  },
   "invariants": [
-    "append_only",
-    "digest_covers_canonical_raw",
-    "prev_hash_chains",
+    "strict_json_no_duplicate_keys",
+    "append_only_writer_lock_and_fsync",
+    "digest_covers_canonical_full_record_except_digest",
+    "prev_hash_chains_full_record_digests",
+    "contiguous_seq_from_zero",
     "provenance_depth_gte_1_or_human_root",
-    "unmeasured_must_be_named"
+    "unmeasured_must_be_named",
+    "finite_and_bounded_residual"
   ],
   "sources": [
     "swarm-vm-runner",
