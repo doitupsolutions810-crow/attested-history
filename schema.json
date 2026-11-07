@@ -13,6 +13,7 @@
     "control12-lattice-ops",
     "capability-plane",
     "trinity-core",
-    "avrone-daemon"
+    "avrone-daemon",
+    "Avrone"
   ]
 }
